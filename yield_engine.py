@@ -27,31 +27,22 @@ SEVERITY_IMPACT = {
     "severe": 40
 }
 
-# Ideal weather ranges per crop
-IDEAL_CONDITIONS = {
-    "tomato": {"temp": (20, 30), "rain": (400, 800)},
-    "potato": {"temp": (15, 25), "rain": (500, 1000)},
-    "grapes": {"temp": (18, 35), "rain": (500, 900)},
-    "apples": {"temp": (10, 24), "rain": (800, 1200)},
-    "strawberry": {"temp": (15, 26), "rain": (600, 1000)},
-    "corn": {"temp": (18, 32), "rain": (500, 900)}
+# Ideal temperature ranges per crop
+IDEAL_TEMPERATURE = {
+    "tomato": (20, 30),
+    "potato": (15, 25),
+    "grapes": (18, 35),
+    "apples": (10, 24),
+    "strawberry": (15, 26),
+    "corn": (18, 32)
 }
 
 
-def calculate_weather_penalty(crop_type, temperature, rainfall):
-    ideal = IDEAL_CONDITIONS[crop_type]
-    temp_min, temp_max = ideal["temp"]
-    rain_min, rain_max = ideal["rain"]
-
-    penalty = 0
-
+def temperature_penalty(crop_type, temperature):
+    temp_min, temp_max = IDEAL_TEMPERATURE[crop_type]
     if temperature < temp_min or temperature > temp_max:
-        penalty += 5
-
-    if rainfall < rain_min or rainfall > rain_max:
-        penalty += 5
-
-    return penalty
+        return 5  # +5% penalty
+    return 0
 
 
 def predict_yield(
@@ -60,7 +51,7 @@ def predict_yield(
     confidence,
     land_size_acres,
     temperature,
-    rainfall
+    affected_percentage
 ):
     try:
         crop_type = crop_type.lower()
@@ -72,33 +63,39 @@ def predict_yield(
         if severity not in SEVERITY_IMPACT:
             return {"error": "Invalid severity level"}
 
+        if affected_percentage < 0 or affected_percentage > 100:
+            return {"error": "Affected percentage must be between 0 and 100"}
+
         # Step 1: Base total yield
         base_yield_per_acre = BASE_YIELD[crop_type]
         total_possible_yield = base_yield_per_acre * land_size_acres
 
-        # Step 2: Severity reduction
+        # Step 2: Split land
+        affected_land = land_size_acres * (affected_percentage / 100)
+        healthy_land = land_size_acres - affected_land
+
+        affected_yield = affected_land * base_yield_per_acre
+        healthy_yield = healthy_land * base_yield_per_acre
+
+        # Step 3: Severity reduction
         severity_reduction = SEVERITY_IMPACT[severity]
 
-        # Step 3: Confidence adjustment
+        # Step 4: Confidence adjustment
         adjusted_reduction = severity_reduction * (confidence / 100)
 
-        # Step 4: Weather penalty
-        weather_penalty = calculate_weather_penalty(
-            crop_type,
-            temperature,
-            rainfall
-        )
+        # Step 5: Temperature penalty
+        temp_penalty = temperature_penalty(crop_type, temperature)
 
-        final_reduction_percent = adjusted_reduction + weather_penalty
-
-        # Cap reduction to avoid unrealistic outputs
+        final_reduction_percent = adjusted_reduction + temp_penalty
         final_reduction_percent = min(final_reduction_percent, 80)
 
-        # Step 5: Yield calculations
-        yield_loss = total_possible_yield * (final_reduction_percent / 100)
-        estimated_yield = total_possible_yield - yield_loss
+        # Step 6: Loss only on affected land
+        yield_loss = affected_yield * (final_reduction_percent / 100)
 
-        # Step 6: Economic loss
+        # Step 7: Final yield
+        estimated_yield = healthy_yield + (affected_yield - yield_loss)
+
+        # Step 8: Economic loss
         price_per_ton = MARKET_PRICE[crop_type]
         economic_loss = yield_loss * price_per_ton
 
@@ -112,6 +109,7 @@ def predict_yield(
 
         return {
             "total_possible_yield_tons": round(total_possible_yield, 2),
+            "affected_land_acres": round(affected_land, 2),
             "final_reduction_percent": round(final_reduction_percent, 2),
             "yield_loss_tons": round(yield_loss, 2),
             "estimated_yield_tons": round(estimated_yield, 2),
